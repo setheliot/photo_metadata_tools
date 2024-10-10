@@ -1,2 +1,37 @@
-# photo_metadata_tools
-Scripts for extracting and updating metadata in photos
+# Photo Metadata Tools
+
+This project includes two Python scripts:
+- `photo_date_extractor.py`: Given a folder, will iterate over all the photos to extract all date metadata into a CSV file.
+- `photo_date_updater.py`: Given a CSV file containing will update the EXIF DateTimeOriginal field for each photo specified.
+
+## Dependencies
+
+The scripts rely on the following Python libraries:
+- `piexif`
+- `Pillow`
+- `pyheif`
+
+## Installation and Use
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/your-username/photo_tools.git
+   ```
+
+1. Install the dependencies
+   ```bash
+   cd photo_tools
+   pip install -r requirements.txt
+   ```
+
+1. Run the scripts
+   ```bash
+   python script.py <folder_path> [-o <output_file>]
+   ```
+   Optionally open the output_file and make any changes to **Set Date**. The script attempts to pick the most sensible value, but can make mistakes.
+
+   Then use the file as the input into the next script:
+
+   ```bash
+   python photo_updater.py --csv <csv_file>
+   ```
