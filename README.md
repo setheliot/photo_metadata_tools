@@ -39,5 +39,10 @@ The scripts rely on the following Python libraries:
    python photo_date_updater.py --csv <csv_file>
    ```
 
+## Safety first
 - `photo_date_extractor.py` is read-only
 - `photo_date_updater.py` will write to the EXIF metadata of the photos in the input file. Please ensure this is what you want to do before running this script.
+
+[As a reminder](LICENSE), THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+We highly recommend you make bakup copies of your photos before running the `photo_date_updater.py` script on them, so you can determine if the script is making the appoprorpiate changes that you want.
