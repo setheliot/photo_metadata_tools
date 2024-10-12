@@ -25,6 +25,7 @@ from datetime import datetime
 import pyheif
 import logging
 import argparse
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -120,6 +121,10 @@ def choose_more_precise_date(set_date, challenger_date):
 
 def collect_image_metadata(directory):
     """Recursively iterate over the directory and extract metadata for image files."""
+    if not (os.path.exists(directory) and os.path.isdir(directory)):
+        logger.error(f"Invalid directory path provided: {directory}")
+        return []
+
     allowed_extensions = ['.jpg', '.jpeg', '.png', '.heic']
     metadata_list = []
 
@@ -207,7 +212,7 @@ def main():
     parser.add_argument('-o', '--output', type=str, default='image_metadata.csv', help='Output CSV file path')
     args = parser.parse_args()
     if not os.path.exists(args.directory) or not os.path.isdir(args.directory):
-        logger.error("Invalid directory path provided.")
+        logger.error(f"Invalid directory path provided: {args.directory}")
         sys.exit(1)
     metadata = collect_image_metadata(args.directory)
     save_to_csv(metadata, args.output)
