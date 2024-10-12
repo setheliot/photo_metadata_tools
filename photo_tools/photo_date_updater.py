@@ -32,6 +32,8 @@ import argparse
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+DATE_FORMATS = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M"]
+
 def set_exif_date(file_path, set_date):
     """Set the EXIF DateTimeOriginal field to the provided date, only if it's not already set to that date."""
     try:
@@ -60,6 +62,17 @@ def set_exif_date(file_path, set_date):
     except Exception as e:
         logger.error(f"Error updating EXIF data for {file_path}: {e}")
 
+def parse_date(date: str):
+    """Try multiple date formats to parse the date string."""
+    from datetime import datetime
+    for date_format in DATE_FORMATS:
+        try:
+            valid_date = datetime.strptime(date, date_format)
+            return valid_date.strftime("%Y:%m:%d %H:%M:%S")
+        except ValueError:
+            continue
+    return None
+
 def process_csv(csv_file):
     """Process the CSV and update EXIF DateTimeOriginal for each photo."""
     import csv
@@ -73,6 +86,9 @@ def process_csv(csv_file):
                 filename = row['Filename']
                 set_date = row['Set Date']
                 
+                if not set_date:
+                    continue
+
                 file_path = os.path.join(folder, filename)
                 
                 # Check if the file exists
@@ -83,17 +99,10 @@ def process_csv(csv_file):
                         continue
                     
                     # Try multiple date formats
-                    date_formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M"]
-                    valid_date = None
-                    for date_format in date_formats:
-                        try:
-                            valid_date = datetime.strptime(set_date, date_format)
-                            break
-                        except ValueError:
-                            continue
+                    valid_date = parse_date(set_date)
 
                     if valid_date:
-                        set_exif_date(file_path, valid_date.strftime("%Y:%m:%d %H:%M:%S"))
+                        set_exif_date(file_path, valid_date)
                     else:
                         logger.warning(f"Invalid date format in CSV for file {filename}: {set_date}")
                 else:

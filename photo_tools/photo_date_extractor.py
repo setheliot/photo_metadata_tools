@@ -30,12 +30,15 @@ import argparse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+DATE_OUTPUT_FORMAT = '%Y-%m-%d %H:%M:%S'
+EXIF_DATE_FORMAT = '%Y:%m:%d %H:%M:%S'
+
 def extract_file_dates(file_path):
     """Extract file modified and created dates."""
     try:
         stat_info = os.stat(file_path)
-        modified_time = datetime.fromtimestamp(stat_info.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-        created_time = datetime.fromtimestamp(stat_info.st_ctime).strftime('%Y-%m-%d %H:%M:%S')
+        modified_time = datetime.fromtimestamp(stat_info.st_mtime)
+        created_time = datetime.fromtimestamp(getattr(stat_info, 'st_birthtime', stat_info.st_ctime))
         return modified_time, created_time
     except Exception as e:
         logger.error(f"Error extracting file dates from {file_path}: {e}")
@@ -51,9 +54,9 @@ def extract_exif_data(file_path):
             exif_data = img._getexif()
             if exif_data:
                 for tag, value in exif_data.items():
-                    tag_name = TAGS.get(tag, tag)
+                    tag_name = TAGS.get(tag, tag) # https://exiv2.org/tags.html
                     if tag_name in ["DateTime", "DateTimeOriginal", "DateTimeDigitized"]:
-                        dates[tag_name] = str(value).replace(":","-",2)
+                        dates[tag_name] = datetime.strptime(str(value), EXIF_DATE_FORMAT)
     except Exception as e:
         logger.error(f"Error reading EXIF data from {file_path}: {e}")
 
@@ -70,42 +73,60 @@ def extract_heic_metadata(file_path):
                 exif_dict = piexif.load(metadata['data'])
                 # Extract relevant date information from the EXIF dictionary
                 if piexif.ExifIFD.DateTimeOriginal in exif_dict["Exif"]:
-                    dates['DateTimeOriginal'] = exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal].decode('utf-8')
+                    dates['DateTimeOriginal'] = datetime.strptime(exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal].decode('utf-8'), EXIF_DATE_FORMAT)
                 if piexif.ExifIFD.DateTimeDigitized in exif_dict["Exif"]:
-                    dates['DateTimeDigitized'] = exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized].decode('utf-8')
+                    dates['DateTimeDigitized'] = datetime.strptime(exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized].decode('utf-8'), EXIF_DATE_FORMAT)
                 if piexif.ImageIFD.DateTime in exif_dict["0th"]:
-                    dates['DateTime'] = exif_dict["0th"][piexif.ImageIFD.DateTime].decode('utf-8')
+                    dates['DateTime'] = datetime.strptime(exif_dict["0th"][piexif.ImageIFD.DateTime].decode('utf-8'), EXIF_DATE_FORMAT)
     except Exception as e:
         logger.error(f"Error reading HEIC metadata from {file_path}: {e}")
-    
-    dates = {k: v.replace(":", "-", 2) for k, v in dates.items()}
 
     return dates
 
-def extract_filename_date(filename):
-    """Extract date from the standard Apple iPhone filename format."""
-    date_str = filename.split('_')[0]
-    date_str = date_str[:8]
+  
+def sane_date_or_string(date_or_str):
+    """Check if the date string is a sane date or just a string"""
+    if not date_or_str:
+        return date_or_str
+    elif isinstance(date_or_str, datetime):
+        return sane_date(date_or_str)
+    else:
+        return date_or_str
+
+def sane_date(date):
+    """Enforce that the date is a sane date for photo metadata."""
+    if not date:
+        return None
     try:
-        date_obj = datetime.strptime(date_str, '%Y%m%d')
-        return date_obj.strftime('%Y-%m-%d')
+        if date.year < 1800 or date.year > 2100:
+            return None
+        else:
+            return date
     except ValueError:
         return None
 
+# Extract date from the standard Apple iPhone filename format (e.g. 20210101_123456_iOS.jpg)
+# or format y-m-d_h-m-s (e.g. 2021-01-01_12-34-56.jpg)
+def extract_filename_date(filename):
+    """Extract date from the standard Apple iPhone filename format."""
+    DATE_FORMATS = ['%Y%m%d', '%Y-%m-%d', '%Y%m%d_%H%M%S', '%Y-%m-%d_%H-%M-%S']
+    date_str = filename.replace(' ', '_').split('_')[0]
+    for date_format in DATE_FORMATS:
+        try:
+            return datetime.strptime(date_str, date_format)
+        except ValueError:
+            continue
+    return None
+
 def choose_more_precise_date(set_date, challenger_date):
-    """Choose the more precise date between two date strings."""
+    """Choose the more precise date between two datetime objects."""
     if not set_date or not challenger_date:
         return set_date or challenger_date
-    
-    set_date_time = set_date.split()
-    challenger_date_time = challenger_date.split()
 
-    if len(challenger_date_time) > 1:
-        if set_date_time[0] == challenger_date_time[0] and (len(set_date_time)==1 or set_date_time[1] != challenger_date_time[1]):
-            return challenger_date
-        else:
-            return set_date
-
+    if set_date.date() == challenger_date.date() and set_date.time() != challenger_date.time():
+        return challenger_date
+    else:
+        return set_date
 
 def collect_image_metadata(directory):
     """Recursively iterate over the directory and extract metadata for image files."""
@@ -116,11 +137,11 @@ def collect_image_metadata(directory):
         for file in files:
             if any(file.lower().endswith(ext) for ext in allowed_extensions):
                 file_path = os.path.join(root, file)
-                
+
                 # Extract file system dates
                 modified_time, created_time = extract_file_dates(file_path)
-                
-                # Extract from standard apple iphone filename
+
+                # Extract date if embedded in filename
                 filename_date = extract_filename_date(file)
 
                 # Extract EXIF metadata or HEIC metadata
@@ -129,50 +150,64 @@ def collect_image_metadata(directory):
                     exif_dates = extract_heic_metadata(file_path)
                 else:
                     exif_dates = extract_exif_data(file_path)
-                
-                # 'Set Date' is the earliest of the retrieved dates
-                set_date = min(filter(None, [filename_date, modified_time, created_time, exif_dates.get('DateTime'), 
-                        exif_dates.get('DateTimeOriginal'), exif_dates.get('DateTimeDigitized')]))
-                exif_date = exif_dates.get('DateTimeOriginal', '')
-
-                # if set_date and exif_date are the same date but different times, then use exif_date for set_date
-                # because exif date is more accurate
-                set_date = choose_more_precise_date(set_date, exif_date)
-
-                # same for modified date
-                if set_date != exif_date:
-                    set_date = choose_more_precise_date(set_date, modified_time)
-
-                # if set_date has only date and no time, then add 0:00 time
-                if len(set_date) == 10:
-                    set_date += ' 00:00' 
 
                 # Prepare the row for the CSV
                 metadata = {
                     'Filename': file,
+                    'File Extension': os.path.splitext(file)[1].lower(),
                     'Folder': root,
-                    'From Filename' : filename_date,
+                }
+                date_fields = {
+                    'From Filename': filename_date,
                     'File Modified Date': modified_time,
                     'File Created Date': created_time,
-                    'EXIF DateTime': exif_dates.get('DateTime', ''),
-                    'EXIF DateTimeOriginal': exif_date,
-                    'EXIF DateTimeDigitized': exif_dates.get('DateTimeDigitized', ''),
-                    'Set Date': set_date
+                    'EXIF DateTime': exif_dates.get('DateTime', None),
+                    'EXIF DateTimeOriginal': exif_dates.get('DateTimeOriginal', None),
+                    'EXIF DateTimeDigitized': exif_dates.get('DateTimeDigitized', None),
                 }
+
+                # remove any dates that are not sane
+                date_fields = {k: sane_date(v) for k, v in date_fields.items()}
+
+                # Filter out None values and compute the earliest date
+                set_date = min((v for v in date_fields.values() if v is not None), default=None)
+
+                # Existing EXIF DateTimeOriginal is preferred if available and more precise than Set Date
+                exif_date = date_fields['EXIF DateTimeOriginal']
+
+                if exif_date:
+                    set_date = choose_more_precise_date(set_date, exif_date)
+
+                # Existing file modified date is preferred if available and more precise than Set Date
+                if modified_time:
+                    if set_date != exif_date:
+                        set_date = choose_more_precise_date(set_date, modified_time)
+
+                # Add the Set Date to the date fields
+                date_fields['Set Date'] = set_date
+
+                # Add date fields to metadata row
+                metadata.update(date_fields)
+
+                # Add row to metadata list
                 metadata_list.append(metadata)
     
     return metadata_list
 
 def save_to_csv(data, output_file):
     """Save the metadata to a CSV file."""
-    headers = ['Filename', 'Folder', 'From Filename', 'File Modified Date', 'File Created Date', 
+    headers = ['Filename', 'File Extension', 'Folder', 'From Filename', 'File Modified Date', 'File Created Date', 
                'EXIF DateTime', 'EXIF DateTimeOriginal', 'EXIF DateTimeDigitized', 'Set Date']
-    
+
     try:
         with open(output_file, 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=headers)
             writer.writeheader()
-            writer.writerows(data)
+
+            # Write the rows with dates formatted as strings
+            for row in data:
+                row = {k: (v.strftime(DATE_OUTPUT_FORMAT) if isinstance(v, datetime) else v) for k, v in row.items()}
+                writer.writerows([row])
     except Exception as e:
         logger.error(f"Error saving data to CSV file {output_file}: {e}")
 
@@ -190,5 +225,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
