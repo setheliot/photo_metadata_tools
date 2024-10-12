@@ -120,6 +120,10 @@ def choose_more_precise_date(set_date, challenger_date):
 
 def collect_image_metadata(directory):
     """Recursively iterate over the directory and extract metadata for image files."""
+    if not (os.path.exists(directory) and os.path.isdir(directory)):
+        logger.error(f"Invalid directory path provided: {directory}")
+        return []
+
     allowed_extensions = ['.jpg', '.jpeg', '.png', '.heic']
     metadata_list = []
 
