@@ -25,6 +25,7 @@ from datetime import datetime
 import pyheif
 import logging
 import argparse
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -211,7 +212,7 @@ def main():
     parser.add_argument('-o', '--output', type=str, default='image_metadata.csv', help='Output CSV file path')
     args = parser.parse_args()
     if not os.path.exists(args.directory) or not os.path.isdir(args.directory):
-        logger.error("Invalid directory path provided.")
+        logger.error(f"Invalid directory path provided: {args.directory}")
         sys.exit(1)
     metadata = collect_image_metadata(args.directory)
     save_to_csv(metadata, args.output)
