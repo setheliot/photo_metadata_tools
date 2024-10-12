@@ -83,16 +83,6 @@ def extract_heic_metadata(file_path):
 
     return dates
 
-  
-def sane_date_or_string(date_or_str):
-    """Check if the date string is a sane date or just a string"""
-    if not date_or_str:
-        return date_or_str
-    elif isinstance(date_or_str, datetime):
-        return sane_date(date_or_str)
-    else:
-        return date_or_str
-
 def sane_date(date):
     """Enforce that the date is a sane date for photo metadata."""
     if not date:
