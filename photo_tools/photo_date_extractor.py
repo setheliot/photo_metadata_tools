@@ -18,6 +18,7 @@ python script.py /path/to/photos -o my_dates.csv
 
 import os
 import csv
+import re
 import piexif
 from PIL import Image
 from PIL.ExifTags import TAGS
@@ -45,6 +46,39 @@ def extract_file_dates(file_path):
         logger.error(f"Error extracting file dates from {file_path}: {e}")
         return None, None
 
+def standardize_date(date_str):
+    """Standardize the date string to a consistent format."""
+    before = date_str
+
+    # remove fractional seconds
+    if "." in date_str:
+        date_str = date_str.split(".")[0]
+    
+    # use colons instead of slashes
+    if date_str.count("/") == 2:
+        date_str = date_str.replace("/", ":", 2)
+
+    if date_str.count("-") == 2:
+        date_str = date_str.replace("-", ":", 2)
+
+
+    # ensure Y-M-D format (this is heuristic and may not work for all cases)
+    date_parts = re.split(r'[ :]', date_str)
+    if (int(date_parts[0]) < int(date_parts[2])):
+        month = date_parts[0]
+        day = date_parts[1]
+        year = date_parts[2]
+        date_str = f"{year}:{month}:{day} " + ":".join(date_parts[3:])
+
+    # add seconds if missing
+    if date_str.count(":") == 3:
+        date_str += ":00"
+
+    if before != date_str:
+        logger.info(f"Standardized date string from '{before}' to '{date_str}'")
+
+    return date_str
+
 def extract_exif_data(file_path):
     """Extract EXIF date metadata from the image if available."""
     dates = {}
@@ -57,7 +91,8 @@ def extract_exif_data(file_path):
                 for tag, value in exif_data.items():
                     tag_name = TAGS.get(tag, tag) # https://exiv2.org/tags.html
                     if tag_name in ["DateTime", "DateTimeOriginal", "DateTimeDigitized"]:
-                        dates[tag_name] = datetime.strptime(str(value), EXIF_DATE_FORMAT)
+                        date_str = standardize_date(str(value))
+                        dates[tag_name] = datetime.strptime(date_str, EXIF_DATE_FORMAT)
     except Exception as e:
         logger.error(f"Error reading EXIF data from {file_path}: {e}")
 
@@ -119,73 +154,93 @@ def choose_more_precise_date(set_date, challenger_date):
     else:
         return set_date
 
-def collect_image_metadata(directory):
-    """Recursively iterate over the directory and extract metadata for image files."""
-    if not (os.path.exists(directory) and os.path.isdir(directory)):
-        logger.error(f"Invalid directory path provided: {directory}")
+
+def get_photo_files(directory_or_file):
+    """If this is a directory, return all the photo files in the directory and all sub-directories. If it is a file, return all the photo files listed in the file."""
+
+    if not os.path.exists(directory_or_file):
+        logger.error(f"Invalid directory or file path provided: {directory_or_file}")
         return []
+
+    if os.path.isfile(directory_or_file):
+        with open(directory_or_file, 'r') as f:
+            files = f.read().splitlines()
+        return files
+    else:
+        photo_files = []
+        for root, _, files in os.walk(directory_or_file):
+            for file in files:
+                photo_files.append(os.path.join(root, file))
+        return photo_files
+
+
+def collect_image_metadata(directory_or_file):
+    """Recursively iterate over the directory and extract metadata for image files."""
+
+    files = get_photo_files(directory_or_file)
 
     allowed_extensions = ['.jpg', '.jpeg', '.png', '.heic']
     metadata_list = []
 
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if any(file.lower().endswith(ext) for ext in allowed_extensions):
-                file_path = os.path.join(root, file)
+    for file in files:
+        if any(file.lower().endswith(ext) for ext in allowed_extensions):
+            #file_path = os.path.join(root, file)
+            file_path = file
+            path, filename = os.path.split(file_path)
 
-                # Extract file system dates
-                modified_time, created_time = extract_file_dates(file_path)
+            # Extract file system dates
+            modified_time, created_time = extract_file_dates(file_path)
 
-                # Extract date if embedded in filename
-                filename_date = extract_filename_date(file)
+            # Extract date if embedded in filename
+            filename_date = extract_filename_date(filename)
 
-                # Extract EXIF metadata or HEIC metadata
-                exif_dates = {}
-                if file.lower().endswith('.heic'):
-                    exif_dates = extract_heic_metadata(file_path)
-                else:
-                    exif_dates = extract_exif_data(file_path)
+            # Extract EXIF metadata or HEIC metadata
+            exif_dates = {}
+            if file.lower().endswith('.heic'):
+                exif_dates = extract_heic_metadata(file_path)
+            else:
+                exif_dates = extract_exif_data(file_path)
 
-                # Prepare the row for the CSV
-                metadata = {
-                    'Filename': file,
-                    'File Extension': os.path.splitext(file)[1].lower(),
-                    'Folder': root,
-                }
-                date_fields = {
-                    'From Filename': filename_date,
-                    'File Modified Date': modified_time,
-                    'File Created Date': created_time,
-                    'EXIF DateTime': exif_dates.get('DateTime', None),
-                    'EXIF DateTimeOriginal': exif_dates.get('DateTimeOriginal', None),
-                    'EXIF DateTimeDigitized': exif_dates.get('DateTimeDigitized', None),
-                }
+            # Prepare the row for the CSV
+            metadata = {
+                'Filename': filename,
+                'File Extension': os.path.splitext(filename)[1].lower(),
+                'Folder': path
+            }
+            date_fields = {
+                'From Filename': filename_date,
+                'File Modified Date': modified_time,
+                'File Created Date': created_time,
+                'EXIF DateTime': exif_dates.get('DateTime', None),
+                'EXIF DateTimeOriginal': exif_dates.get('DateTimeOriginal', None),
+                'EXIF DateTimeDigitized': exif_dates.get('DateTimeDigitized', None),
+            }
 
-                # remove any dates that are not sane
-                date_fields = {k: sane_date(v) for k, v in date_fields.items()}
+            # remove any dates that are not sane
+            date_fields = {k: sane_date(v) for k, v in date_fields.items()}
 
-                # Filter out None values and compute the earliest date
-                set_date = min((v for v in date_fields.values() if v is not None), default=None)
+            # Filter out None values and compute the earliest date
+            set_date = min((v for v in date_fields.values() if v is not None), default=None)
 
-                # Existing EXIF DateTimeOriginal is preferred if available and more precise than Set Date
-                exif_date = date_fields['EXIF DateTimeOriginal']
+            # Existing EXIF DateTimeOriginal is preferred if available and more precise than Set Date
+            exif_date = date_fields['EXIF DateTimeOriginal']
 
-                if exif_date:
-                    set_date = choose_more_precise_date(set_date, exif_date)
+            if exif_date:
+                set_date = choose_more_precise_date(set_date, exif_date)
 
-                # Existing file modified date is preferred if available and more precise than Set Date
-                if modified_time:
-                    if set_date != exif_date:
-                        set_date = choose_more_precise_date(set_date, modified_time)
+            # Existing file modified date is preferred if available and more precise than Set Date
+            if modified_time:
+                if set_date != exif_date:
+                    set_date = choose_more_precise_date(set_date, modified_time)
 
-                # Add the Set Date to the date fields
-                date_fields['Set Date'] = set_date
+            # Add the Set Date to the date fields
+            date_fields['Set Date'] = set_date
 
-                # Add date fields to metadata row
-                metadata.update(date_fields)
+            # Add date fields to metadata row
+            metadata.update(date_fields)
 
-                # Add row to metadata list
-                metadata_list.append(metadata)
+            # Add row to metadata list
+            metadata_list.append(metadata)
     
     return metadata_list
 
@@ -208,13 +263,26 @@ def save_to_csv(data, output_file):
 
 def main():
     parser = argparse.ArgumentParser(description='Extract metadata from images in a directory.')
-    parser.add_argument('directory', type=str, help='Directory path containing images')
-    parser.add_argument('-o', '--output', type=str, default='image_metadata.csv', help='Output CSV file path')
+    # Must provide either a directory or a file
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-d', '--directory', type=str, help='Directory path containing images')
+    group.add_argument('-f', '--file', type=str, help='File containing a list of images')
+    
+    parser.add_argument('-o', '--output', type=str, default='image_metadata.csv', help='Output CSV file path', required=False)
     args = parser.parse_args()
-    if not os.path.exists(args.directory) or not os.path.isdir(args.directory):
-        logger.error(f"Invalid directory path provided: {args.directory}")
-        sys.exit(1)
-    metadata = collect_image_metadata(args.directory)
+    if args.file:
+        if not os.path.exists(args.file) or not os.path.isfile(args.file):
+            logger.error(f"Invalid file path provided: {args.file} - exists: {os.path.exists(args.file)} - isfile: {os.path.isfile(args.file)}")
+            sys.exit(1)
+        directory_or_file = args.file
+    else:
+        if not os.path.exists(args.directory) or not os.path.isdir(args.directory):
+            logger.error(f"Invalid directory path provided: {args.directory}")
+            sys.exit(1)
+        directory_or_file = args.directory
+
+    metadata = collect_image_metadata(directory_or_file)
+
     save_to_csv(metadata, args.output)
     logger.info(f"Metadata extraction complete. Results saved to {args.output}.")
 
