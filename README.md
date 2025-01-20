@@ -29,8 +29,13 @@ The scripts rely on the following Python libraries:
 
 1. Run the scripts:
    ```bash
-   python photo_date_extractor.py <folder_path> [-o <output_file>]
+   photo_date_extractor.py [-h] (-d <directory> | -f <input filename>) [-o <output filename>]
    ```
+  * The extractor either
+    * iterates over all photos in the directory given (and its sub-directories)
+    * or, it iterates through all the filenames in the file supplied
+  * Output is a CSV, It goes into the output filename suppled, or the filename `image_metadata.csv` by default
+
    Optionally open the output_file and make any changes to **Set Date**. The script attempts to pick the most sensible value, but can make mistakes.
 
    Then use the file as the input into the next script:
